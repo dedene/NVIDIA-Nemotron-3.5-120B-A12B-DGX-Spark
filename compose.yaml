@@ -1,0 +1,67 @@
+# NVIDIA Nemotron 3.5 Super VL 120B-A12B (NVFP4) on one DGX Spark: `docker compose up -d --wait` downloads the
+# pinned checkpoint and drafter, and returns once the OpenAI-compatible API on :8888 answers. Settings: .env.example.
+name: nemotron-3-5-super-vl
+
+x-image: &image ${VLLM_IMAGE:-vllm/vllm-openai:nightly-3f1bcfd82bb2e93fcd364fc7a5491718453a77e2@sha256:cb9bc64f0f038c2c2ebf13b31248fb87aca40c356c3d20f363be087cfcff1fcd}
+
+x-pins: &pins
+  MODEL_ID: ${MODEL_ID:-nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4}
+  MODEL_REVISION: ${MODEL_REVISION:-2e5cc3953bb1ea66b2fb7c831fee3aa317427e69}
+  DRAFT_ID: ${DRAFT_ID:-nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4-LiLiCorr}
+  DRAFT_REVISION: ${DRAFT_REVISION:-7c7221aeb4cb3139307aa457f7dce11a8fb6ceb2}
+  SPEC: ${SPEC:-lilicorr}
+
+services:
+  # One-shot: fetch the checkpoint (75 GB) and, for SPEC=lilicorr, the drafter (1.3 GB) into the host's Hugging
+  # Face cache. Resumable, and a quick no-op once the files are there. The vLLM image ships the `hf` CLI.
+  download:
+    image: *image
+    entrypoint: ["bash", "/download.sh"]
+    environment:
+      <<: *pins
+      HF_TOKEN: ${HF_TOKEN:-}
+    volumes:
+      - ./tools/download.sh:/download.sh:ro
+      - ${HF_CACHE:-~/.cache/huggingface}:/root/.cache/huggingface
+
+  nemotron:
+    image: *image
+    entrypoint: ["bash", "/serve.sh"]
+    container_name: nemotron-3.5-super-vl
+    depends_on:
+      download:
+        condition: service_completed_successfully
+    gpus: all
+    network_mode: host
+    ipc: host
+    shm_size: 16gb
+    ulimits:
+      memlock: -1
+      stack: 67108864
+    environment:
+      <<: *pins
+      SPEC_TOKENS: ${SPEC_TOKENS:-}
+      SERVED_NAME: ${SERVED_NAME:-nemotron-3.5-super-vl}
+      ALIAS: ${ALIAS:-local-ai}
+      HOST: ${HOST:-0.0.0.0}
+      PORT: ${PORT:-8888}
+      CONTEXT: ${CONTEXT:-1048576}
+      MAX_SEQS: ${MAX_SEQS:-1}
+      BATCHED_TOKENS: ${BATCHED_TOKENS:-8192}
+      GPU_UTIL: ${GPU_UTIL:-0.75}
+      API_KEY: ${API_KEY:-}
+      HF_HUB_OFFLINE: "1"
+      VLLM_CACHE_ROOT: /root/.cache/vllm
+      TRITON_CACHE_DIR: /root/.cache/triton
+    volumes:
+      - ./tools/serve.sh:/serve.sh:ro
+      - ${HF_CACHE:-~/.cache/huggingface}:/root/.cache/huggingface
+      # torch.compile / Triton / FlashInfer caches, so only the first start compiles
+      - ${KERNEL_CACHE:-~/.cache/nemotron-3.5-super-vl-dgx-spark}:/root/.cache
+    healthcheck:
+      test: ["CMD", "curl", "-fs", "http://127.0.0.1:${PORT:-8888}/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 40m
+      start_interval: 10s
