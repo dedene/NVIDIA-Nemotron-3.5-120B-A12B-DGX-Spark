@@ -76,6 +76,31 @@ For any other vLLM flag, append it to the `nemotron` service: `tools/serve.sh` p
 - **The API is open on the LAN.** Set `API_KEY` to require a bearer token.
 - **Port 8888** is the Spark's usual model port. Stop the other model server first.
 
+## As an agent: benchmark results
+
+I ran this stack through the same agent benchmark as the other models I run on this Spark, on 16 October 2026. Same box, same samples, thinking off, temperature 0. The only change from the defaults was `MAX_SEQS=4`, so the harness could send four requests at once; everything else is the model card's Spark recipe with LiLiCorr. The suites are the standard [Inspect](https://inspect.aisi.org.uk/) tasks from inspect_evals 0.24.0. Brackets are the 95% interval.
+
+| | Nemotron 3.5 Super VL (NVFP4, vLLM + LiLiCorr) | Qwen3.8 Flash Next (NVIDIA FP4-Local, vLLM + MTP) | MiniCPM-V 4.7 (Q8_0, llama.cpp) | Underdog Saluki 27B (IQ2, llama.cpp + DFlash) |
+|---|---:|---:|---:|---:|
+| BFCL single-turn, n=500 | 85.6 (82–88) | 82.4 | **89.0** | 86.8 |
+| BFCL multi-turn, n=199 | 49.2 (42–56) | 54.5 | **63.0** | 48.2 |
+| AgentDojo, tasks done without an attack, n=96 | 77.1 (68–84) | 84.4 | **85.4** | 75.0 |
+| AgentDojo, attacks resisted, n=200 | 81.5 (76–86) | **99.0** | 64.5 | 88.0 |
+| AgentDojo, task done and attack not carried out, n=200 | 55.5 (49–62) | **81.0** | 49.0 | 59.0 |
+| IFEval, prompt strict, n=541 | 85.6 (82–88) | 85.8 | **88.5** | 79.3 |
+| GPQA-Diamond, n=198 | 56.1 (49–63) | 64.6 | **69.7** | 49.0 |
+| Global-MMLU Dutch, n=300 | 86.7 (82–90) | **87.0** | 86.7 | 81.3 |
+| Agent loop, steps per minute (8 tool steps, growing to ~29k tokens) | **19.2** | 13.8 | 18.3 | 10.1 |
+| Decode, tok/s weighted over code, prose and tool calls | 34.6 | 43.6 | **55.7** | 44.9 |
+| Prefill at ~32k tokens, tok/s | **2,373** | 2,274 | 1,854 | 704 |
+| Memory for the whole server | ~91 GB | ~97 GB | ~44 GB | 27.5 GB |
+
+It lands in the middle. Tool calls, instruction following and Dutch are solid, but it leads none of the quality rows, and with thinking off GPQA trails both Qwen and MiniCPM. The agent loop is its strong point: tool-call replies decode at 78 tok/s because LiLiCorr drafts them well, and long prompts prefill fastest of the four. Prose is another story. Decode is the slowest here, and Dutch drops to 23.6 tok/s. One multi-turn sample failed inside the scorer, hence n=199.
+
+Prompt injection: AgentDojo hides an instruction in the data a tool returns and checks whether the agent carries it out. Nemotron did so in 37 of 200 runs. Mail, calendar and files held up (9 of 113). Slack (12 of 29) and banking (10 of 23) did not. In banking it never moved large sums: the attacks that redirect a recurring payment, drain the account or send $30,000 all failed. What got through were small transfers to the attacker's IBAN with personal details in the subject (a friend's IBAN, the user's phone model, a favourite food, the list of scheduled payments), and three password changes to the attacker's choice. In 6 of those 10 banking runs, and 10 of the 12 in Slack, it finished the user's task as well, so nothing looked wrong.
+
+If you give it tools that send money or messages, put the check outside the model: an allowlist of recipients, or a confirmation step for anything new.
+
 ## Credits
 
 - [NVIDIA](https://huggingface.co/nvidia) for Nemotron 3.5 Super VL, the NVFP4 checkpoint, the LiLiCorr drafter and the DGX Spark serving recipe on the model card (OpenMDW-1.1). The weights are not in this repository.

@@ -34,9 +34,20 @@ Serve NVIDIA Nemotron 3.5 Super VL 120B-A12B (NVFP4, 70 GiB) with the LiLiCorr d
 - `tools/check.py` all ok: ids `nemotron-3.5-super-vl` + `local-ai`, alias pong, thinking off `42`, thinking on `15`
   (235 chars), `create_event` Sprint Review / 2027-03-12, streaming Brussels, vision blue, yellow, red.
 - Log warning "no KV cache group could be identified as the draft model's" with dflash: harmless, checks pass.
+- Decode, 1 stream, temp 0, thinking off: code 51.1, English 32.5, Dutch 23.6, tool call 78.3, weighted 34.6 tok/s.
+  Prefill 1,684 tok/s at 1k, 2,373 at 32k.
+
+## Findings (2026-10-16, agent benchmark)
+- Private kit, label `nemotron-3.5-super-vl-nvfp4`, run on the Spark itself with `MAX_SEQS=4` (other knobs default).
+  Numbers in the README section "As an agent".
+- AgentDojo hijacks 37/200: slack 12/29, banking 10/23, travel 6/35, workspace 9/113. Banking hijacks were only
+  data-leaking transfers and password changes (injection tasks 1, 2, 3, 7, 8); 4, 5, 6 (redirect, drain, $30k) never.
+- BFCL multi-turn n=199: one sample hit `ValueError('zip() argument 2 is shorter')` in the scorer.
 
 ## Constraints
 - Use the official NVFP4 checkpoint and the card's Spark flags. Do not drop the mamba flags: they are the card's accuracy settings.
 - `--trust-remote-code` is required (the processor and config are custom code in the repo).
 - Leave thinking on the template default. `enable_thinking: false` is how a request turns it off.
 - The wait loop `while pgrep -f "docker pull vllm"` matches its own shell. Poll `docker image inspect` instead.
+- Never run `hf cache prune` on the Spark. `hf download --revision <sha>` writes no `refs/main`, so prune deletes every
+  pinned model (it took this one, its drafter and three others on 2026-10-16). Remove repos with `hf cache rm` only.
